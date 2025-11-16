@@ -14,6 +14,106 @@ Encrypted messaging with ACKs
 
 Replay/tamper protection validated during testing
 
+
+SQL SCHEMA
+ast login: Sun Nov 16 15:55:11 on ttys004
+taha@Tahas-Mac-mini ~ % /usr/local/mysql/bin/mysql -u root -p
+
+Enter password: 
+Welcome to the MySQL monitor.  Commands end with ; or \g.
+Your MySQL connection id is 9
+Server version: 8.0.30 MySQL Community Server - GPL
+
+Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+
+Oracle is a registered trademark of Oracle Corporation and/or its
+affiliates. Other names may be trademarks of their respective
+owners.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+mysql> SHOW DATABASES;
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
+| securechat         |
+| sys                |
++--------------------+
+5 rows in set (0.01 sec)
+
+mysql> ALTER USER 'chatuser'@'localhost'
+    -> IDENTIFIED WITH mysql_native_password BY 'StrongPassword123';
+Query OK, 0 rows affected (0.01 sec)
+
+mysql> FLUSH PRIVILEGES
+    -> FLUSH PRIVILEGES;
+ERROR 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'FLUSH PRIVILEGES' at line 2
+mysql> FLUSH PRIVILEGES;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> SELECT user, host, plugin FROM mysql.user;
++------------------+-----------+-----------------------+
+| user             | host      | plugin                |
++------------------+-----------+-----------------------+
+| chatuser         | localhost | mysql_native_password |
+| mysql.infoschema | localhost | caching_sha2_password |
+| mysql.session    | localhost | caching_sha2_password |
+| mysql.sys        | localhost | caching_sha2_password |
+| root             | localhost | caching_sha2_password |
++------------------+-----------+-----------------------+
+5 rows in set (0.00 sec)
+
+mysql> USE securechat;
+Reading table information for completion of table and column names
+You can turn off this feature to get a quicker startup with -A
+
+Database changed
+mysql> SELECT id, email, username, salt, pwd_hash FROM users;
+ERROR 1054 (42S22): Unknown column 'id' in 'field list'
+mysql> DESCRIBE users;
++----------+---------------+------+-----+---------+-------+
+| Field    | Type          | Null | Key | Default | Extra |
++----------+---------------+------+-----+---------+-------+
+| email    | varchar(255)  | YES  |     | NULL    |       |
+| username | varchar(255)  | YES  | UNI | NULL    |       |
+| salt     | varbinary(16) | YES  |     | NULL    |       |
+| pwd_hash | char(64)      | YES  |     | NULL    |       |
++----------+---------------+------+-----+---------+-------+
+4 rows in set (0.00 sec)
+
+mysql> ALTER TABLE users
+    -> ADD COLUMN id INT PRIMARY KEY AUTO_INCREMENT FIRST;
+Query OK, 0 rows affected (0.02 sec)
+Records: 0  Duplicates: 0  Warnings: 0
+
+mysql> DESCRIBE users;
++----------+---------------+------+-----+---------+----------------+
+| Field    | Type          | Null | Key | Default | Extra          |
++----------+---------------+------+-----+---------+----------------+
+| id       | int           | NO   | PRI | NULL    | auto_increment |
+| email    | varchar(255)  | YES  |     | NULL    |                |
+| username | varchar(255)  | YES  | UNI | NULL    |                |
+| salt     | varbinary(16) | YES  |     | NULL    |                |
+| pwd_hash | char(64)      | YES  |     | NULL    |                |
++----------+---------------+------+-----+---------+----------------+
+5 rows in set (0.01 sec)
+
+mysql> SELECT * FROM users;
++----+---------------+----------+------------------------------------+------------------------------------------------------------------+
+| id | email         | username | salt                               | pwd_hash                                                         |
++----+---------------+----------+------------------------------------+------------------------------------------------------------------+
+|  1 | taha@test.com | taha1    | 0xF829B1D284E76B24186AFECFBE7E5C68 | 3f31432fa11f5f5c09eae1d900a3e90a84a5d05f8d6a5893caf78b3434c3576c |
++----+---------------+----------+------------------------------------+------------------------------------------------------------------+
+1 row in set (0.00 sec)
+
+mysql> mysqldump -u chatuser -p --databases securechat > securechat_dump.sql
+    -> 
+    -> 
+
+
 📌 Project Structure
 securechat/
 │
