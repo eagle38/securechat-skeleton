@@ -1,0 +1,10 @@
+# Ignore cryptographic materials
+certs/
+*.key
+*.crt
+*.pem
+
+# Ignore Python environment
+venv/
+__pycache__/
+
