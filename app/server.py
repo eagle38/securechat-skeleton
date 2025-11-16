@@ -66,6 +66,67 @@ def handle_client(conn):
     print("✔ Sent server_hello")
     
     # ---- STOP HERE (DH, login, messaging will come later) ----
+   # ======================================================
+    # ===============   DIFFIE–HELLMAN   ===================
+    # ======================================================
+
+    # Import DH helpers
+    from utils.crypto_utils import (
+        generate_dh_keypair,
+        compute_shared_secret,
+        derive_aes_key_from_shared,
+    )
+
+    # ---- Step 4: Receive DH client message ----
+    msg = conn.recv(65536).decode()
+    dh_req = json.loads(msg)
+
+    if dh_req.get("type") != "dh client":
+        print("BAD PROTOCOL (expected 'dh client')")
+        conn.close()
+        return
+
+    if "A" not in dh_req:
+        print("BAD DH payload: missing A")
+        conn.close()
+        return
+
+    A = int(dh_req["A"])   # client's public DH key
+
+    # ---- Step 5: Server generates its DH keypair ----
+    server_priv, server_pub = generate_dh_keypair()
+    B = server_pub
+
+    # ---- Step 6: Send DH server message ----
+    dh_response = {
+        "type": "dh server",
+        "B": str(B)
+    }
+    conn.send(json.dumps(dh_response).encode())
+
+    # ---- Step 7: Compute shared secret ----
+    Ks = compute_shared_secret(server_priv, A)
+    K = derive_aes_key_from_shared(Ks)
+
+    print(f"✔ Server derived session key: {K.hex()}")
+
+    # ---- Step 8: Optional verification (client sends its key for debugging) ----
+    try:
+        test_raw = conn.recv(8192).decode()
+        if test_raw:
+            test_msg = json.loads(test_raw)
+            if test_msg.get("type") == "dh verify":
+                client_key_hex = test_msg.get("key_hex")
+                print("Client reported key:", client_key_hex)
+                print("Match?:", client_key_hex == K.hex())
+    except Exception:
+        pass
+
+    # DH is complete
+
+
+
+
     conn.close()
 
 

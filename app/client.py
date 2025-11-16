@@ -72,6 +72,55 @@ def main():
     # ---- End handshake (DH coming later) ----
     print("Handshake complete.")
 
+   # ======================================================
+    # ===============   DIFFIE–HELLMAN   ===================
+    # ======================================================
+
+    from utils.crypto_utils import (
+        generate_dh_keypair,
+        compute_shared_secret,
+        derive_aes_key_from_shared,
+    )
+
+    # ---- Step 1: Client generates DH keypair ----
+    client_priv, client_pub = generate_dh_keypair()
+    A = client_pub
+
+    # ---- Step 2: Send DH client message ----
+    dh_msg = {
+        "type": "dh client",
+        "A": str(A)      # send public DH share as decimal string
+    }
+    s.send(json.dumps(dh_msg).encode())
+    print("✔ Sent DH client value (A)")
+
+    # ---- Step 3: Receive DH server message ----
+    dh_raw = s.recv(65536).decode()
+    dh_resp = json.loads(dh_raw)
+
+    if dh_resp.get("type") != "dh server":
+        print("BAD PROTOCOL (expected dh server)")
+        s.close()
+        return
+
+    B = int(dh_resp["B"])   # server's public DH share
+
+    # ---- Step 4: Compute shared secret ----
+    Ks = compute_shared_secret(client_priv, B)
+    K = derive_aes_key_from_shared(Ks)
+    print(f"✔ Client derived session key: {K.hex()}")
+
+    # ---- Step 5: Send verify message (for testing/debug) ----
+    verify_msg = {
+        "type": "dh verify",
+        "key_hex": K.hex()
+    }
+    s.send(json.dumps(verify_msg).encode())
+    print("✔ Sent DH key verification to server")
+
+    print("DH complete — shared AES key established.")
+
+
     s.close()
 
 
