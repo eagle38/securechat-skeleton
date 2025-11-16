@@ -69,234 +69,256 @@ def ensure_users_table():
 #   Handle client connection
 # ============================================================
 def handle_client(conn):
-    """Certificate exchange → DH → Registration"""
+    """Certificate exchange → DH → Registration → Login → Messaging"""
 
-    # --------------------------------------------------------
-    # 1. Receive client hello
-    # --------------------------------------------------------
-    data_raw = conn.recv(8192).decode()
-    data = json.loads(data_raw)
-
-    if data.get("type") != "hello":
-        print("BAD PROTOCOL (expected hello)")
-        conn.close()
-        return
-
-    client_cert_pem = data["client_cert"].encode()
-    client_cert = load_certificate_from_pem(client_cert_pem)
-
-    # --------------------------------------------------------
-    # 2. Validate client certificate
-    # --------------------------------------------------------
-    ok, reason = validate_certificate(client_cert, CA_CERT, expected_cn="client")
-    if not ok:
-        print(reason)
-        conn.close()
-        return
-
-    print("✔ Client certificate validated")
-
-    # --------------------------------------------------------
-    # 3. Send server hello
-    # --------------------------------------------------------
-    nonce = os.urandom(16)
-
-    response = {
-        "type": "server_hello",
-        "server_cert": SERVER_CERT_PEM,
-        "nonce": base64.b64encode(nonce).decode(),
-    }
-
-    conn.send(json.dumps(response).encode())
-    print("✔ Sent server_hello")
-
-    # --------------------------------------------------------
-    # 4. Diffie–Hellman Key Exchange
-    # --------------------------------------------------------
-    from utils.crypto_utils import (
-        generate_dh_keypair,
-        compute_shared_secret,
-        derive_aes_key_from_shared,
-    )
-
-    msg = conn.recv(65536).decode()
-    dh_req = json.loads(msg)
-
-    if dh_req.get("type") != "dh client":
-        print("BAD PROTOCOL (expected dh client)")
-        conn.close()
-        return
-
-    A = int(dh_req["A"])
-
-    # Generate DH keypair
-    server_priv, server_pub = generate_dh_keypair()
-    B = server_pub
-
-    dh_response = {"type": "dh server", "B": str(B)}
-    conn.send(json.dumps(dh_response).encode())
-
-    # Shared secret
-    Ks = compute_shared_secret(server_priv, A)
-    K = derive_aes_key_from_shared(Ks)
-
-    print(f"✔ Server derived session key: {K.hex()}")
-
-    # Optional verify msg
-    try:
-        verify_raw = conn.recv(8192).decode()
-        if verify_raw:
-            verify_msg = json.loads(verify_raw)
-            if verify_msg.get("type") == "dh verify":
-                print("Client key:", verify_msg["key_hex"])
-                print("Match?:", verify_msg["key_hex"] == K.hex())
-    except:
-        pass
-
-    # --------------------------------------------------------
-    # 5. Encrypted Registration
-    # --------------------------------------------------------
-    ensure_users_table()
-
-    reg_raw = conn.recv(65536).decode()
-    if not reg_raw:
-        conn.close()
-        return
-
-    reg_msg = json.loads(reg_raw)
-
-    if reg_msg.get("type") != "register":
-        conn.close()
-        return
-
-    enc_b64 = reg_msg.get("data")
-    if not enc_b64:
-        error_plain = json.dumps({"status": "error", "msg": "bad_payload"}).encode()
-        enc = aes_encrypt(K, error_plain)
-        conn.send(json.dumps({"type": "register_reply", "data": enc}).encode())
-        conn.close()
-        return
-
-    # decrypt registration data
-    try:
-        reg_plain = aes_decrypt(K, enc_b64)
-        reg_obj = json.loads(reg_plain.decode())
-
-        email = reg_obj["email"]
-        username = reg_obj["username"]
-        password = reg_obj["password"]
-    except:
-        error_plain = json.dumps({"status": "error", "msg": "invalid_data"}).encode()
-        enc = aes_encrypt(K, error_plain)
-        conn.send(json.dumps({"type": "register_reply", "data": enc}).encode())
-        conn.close()
-        return
-
-    # Salt + Hash password
-    salt = os.urandom(16)
-    h = hashlib.sha256()
-    h.update(salt + password.encode())
-    pwd_hash_hex = h.hexdigest()
-
-    # Write to MySQL
-    DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
-    DB_USER = os.getenv("DB_USER", "chatuser")
-    DB_PASS = os.getenv("DB_PASS", "StrongPassword123")
-    DB_NAME = os.getenv("DB_NAME", "securechat")
+    import traceback
 
     try:
-        conn_db = mysql.connector.connect(
-            host=DB_HOST, user=DB_USER, password=DB_PASS, database=DB_NAME
+        # --------------------------------------------------------
+        # 1. Receive client hello
+        # --------------------------------------------------------
+        data_raw = conn.recv(8192).decode()
+        data = json.loads(data_raw)
+
+        if data.get("type") != "hello":
+            print("BAD PROTOCOL (expected hello)")
+            conn.close()
+            return
+
+        client_cert_pem = data["client_cert"].encode()
+        client_cert = load_certificate_from_pem(client_cert_pem)
+
+        # --------------------------------------------------------
+        # 2. Validate client certificate
+        # --------------------------------------------------------
+        ok, reason = validate_certificate(client_cert, CA_CERT, expected_cn="client")
+        if not ok:
+            print(reason)
+            conn.close()
+            return
+
+        print("✔ Client certificate validated")
+
+        # --------------------------------------------------------
+        # 3. Send server hello
+        # --------------------------------------------------------
+        nonce = os.urandom(16)
+
+        response = {
+            "type": "server_hello",
+            "server_cert": SERVER_CERT_PEM,
+            "nonce": base64.b64encode(nonce).decode(),
+        }
+
+        conn.send(json.dumps(response).encode())
+        print("✔ Sent server_hello")
+
+        # --------------------------------------------------------
+        # 4. Diffie–Hellman Key Exchange
+        # --------------------------------------------------------
+        from utils.crypto_utils import (
+            generate_dh_keypair,
+            compute_shared_secret,
+            derive_aes_key_from_shared,
         )
-        cur = conn_db.cursor()
-        sql = "INSERT INTO users (email, username, salt, pwd_hash) VALUES (%s, %s, %s, %s)"
-        cur.execute(sql, (email, username, salt, pwd_hash_hex))
-        conn_db.commit()
-        cur.close()
-        conn_db.close()
 
-        reply_plain = json.dumps({"status": "ok"}).encode()
-        enc = aes_encrypt(K, reply_plain)
-        conn.send(json.dumps({"type": "register_reply", "data": enc}).encode())
+        msg = conn.recv(65536).decode()
+        dh_req = json.loads(msg)
 
-    except mysql.connector.IntegrityError:
-        reply_plain = json.dumps({"status": "error", "msg": "username_taken"}).encode()
-        enc = aes_encrypt(K, reply_plain)
-        conn.send(json.dumps({"type": "register_reply", "data": enc}).encode())
+        if dh_req.get("type") != "dh client":
+            print("BAD PROTOCOL (expected dh client)")
+            conn.close()
+            return
 
-    except:
-        reply_plain = json.dumps({"status": "error", "msg": "server_error"}).encode()
-        enc = aes_encrypt(K, reply_plain)
-        conn.send(json.dumps({"type": "register_reply", "data": enc}).encode())
+        A = int(dh_req["A"])
 
-         # ======================================================
-    # =================== SECURE LOGIN =====================
-    # ======================================================
-    try:
-        login_raw = conn.recv(65536).decode()
-        if login_raw:
-            login_msg = json.loads(login_raw)
+        server_priv, server_pub = generate_dh_keypair()
+        B = server_pub
 
-            if login_msg.get("type") == "login":
-                enc_b64 = login_msg.get("data")
+        dh_response = {"type": "dh server", "B": str(B)}
+        conn.send(json.dumps(dh_response).encode())
 
-                # decrypt login payload
-                login_plain = aes_decrypt(K, enc_b64)
-                login_obj = json.loads(login_plain.decode())
+        Ks = compute_shared_secret(server_priv, A)
+        K = derive_aes_key_from_shared(Ks)
 
-                username = login_obj.get("username")
-                password = login_obj.get("password")
+        print(f"✔ Server derived session key: {K.hex()}")
 
-                if username and password:
-                    # lookup user in DB
+        # Optional DH verification
+        try:
+            verify_raw = conn.recv(8192).decode()
+            if verify_raw:
+                verify_msg = json.loads(verify_raw)
+                if verify_msg.get("type") == "dh verify":
+                    print("Client key:", verify_msg["key_hex"])
+                    print("Match?:", verify_msg["key_hex"] == K.hex())
+        except Exception:
+            pass
+
+        # --------------------------------------------------------
+        # 5. Encrypted Registration
+        # --------------------------------------------------------
+        ensure_users_table()
+
+        reg_raw = conn.recv(65536).decode()
+        if not reg_raw:
+            print("No registration payload received")
+            conn.close()
+            return
+
+        reg_msg = json.loads(reg_raw)
+
+        if reg_msg.get("type") != "register":
+            print("BAD PROTOCOL (expected register)")
+            conn.close()
+            return
+
+        enc_b64 = reg_msg.get("data")
+        if not enc_b64:
+            error_plain = json.dumps({"status": "error", "msg": "bad_payload"}).encode()
+            enc = aes_encrypt(K, error_plain)
+            conn.send(json.dumps({"type": "register_reply", "data": enc}).encode())
+            conn.close()
+            return
+
+        try:
+            reg_plain = aes_decrypt(K, enc_b64)
+            reg_obj = json.loads(reg_plain.decode())
+
+            email = reg_obj["email"]
+            username = reg_obj["username"]
+            password = reg_obj["password"]
+        except Exception as e:
+            print("Registration decrypt error:", e)
+            traceback.print_exc()
+            error_plain = json.dumps({"status": "error", "msg": "invalid_data"}).encode()
+            enc = aes_encrypt(K, error_plain)
+            conn.send(json.dumps({"type": "register_reply", "data": enc}).encode())
+            conn.close()
+            return
+
+        salt = os.urandom(16)
+        h = hashlib.sha256()
+        h.update(salt + password.encode())
+        pwd_hash_hex = h.hexdigest()
+
+        DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
+        DB_USER = os.getenv("DB_USER", "chatuser")
+        DB_PASS = os.getenv("DB_PASS", "StrongPassword123")
+        DB_NAME = os.getenv("DB_NAME", "securechat")
+
+        try:
+            conn_db = mysql.connector.connect(
+                host=DB_HOST, user=DB_USER, password=DB_PASS, database=DB_NAME
+            )
+            cur = conn_db.cursor()
+            sql = "INSERT INTO users (email, username, salt, pwd_hash) VALUES (%s, %s, %s, %s)"
+            cur.execute(sql, (email, username, salt, pwd_hash_hex))
+            conn_db.commit()
+            cur.close()
+            conn_db.close()
+
+            reply_plain = json.dumps({"status": "ok"}).encode()
+            enc = aes_encrypt(K, reply_plain)
+            conn.send(json.dumps({"type": "register_reply", "data": enc}).encode())
+
+        except mysql.connector.IntegrityError:
+            reply_plain = json.dumps({"status": "error", "msg": "username_taken"}).encode()
+            enc = aes_encrypt(K, reply_plain)
+            conn.send(json.dumps({"type": "register_reply", "data": enc}).encode())
+
+        except Exception as e:
+            print("DB error during registration:", e)
+            traceback.print_exc()
+            reply_plain = json.dumps({"status": "error", "msg": "server_error"}).encode()
+            enc = aes_encrypt(K, reply_plain)
+            conn.send(json.dumps({"type": "register_reply", "data": enc}).encode())
+
+        # --------------------------------------------------------
+        # 6. Secure Login
+        # --------------------------------------------------------
+        try:
+            login_raw = conn.recv(65536).decode()
+            if login_raw:
+                login_msg = json.loads(login_raw)
+
+                if login_msg.get("type") == "login":
+                    enc_b64 = login_msg.get("data")
+
+                    login_plain = aes_decrypt(K, enc_b64)
+                    login_obj = json.loads(login_plain.decode())
+
+                    login_username = login_obj.get("username")
+                    login_password = login_obj.get("password")
+
                     conn_db = mysql.connector.connect(
-                        host=DB_HOST,
-                        user=DB_USER,
-                        password=DB_PASS,
-                        database=DB_NAME,
+                        host=DB_HOST, user=DB_USER, password=DB_PASS, database=DB_NAME
                     )
                     cur = conn_db.cursor()
-                    cur.execute("SELECT salt, pwd_hash FROM users WHERE username=%s", (username,))
+                    cur.execute("SELECT salt, pwd_hash FROM users WHERE username=%s", (login_username,))
                     row = cur.fetchone()
                     cur.close()
                     conn_db.close()
 
                     if not row:
-                        reply_plain = json.dumps(
-                            {"status": "error", "msg": "invalid_credentials"}
-                        ).encode()
+                        reply_plain = json.dumps({"status": "error", "msg": "invalid_credentials"}).encode()
                     else:
                         db_salt, db_hash_hex = row
 
-                        # recompute hash
-                        h = hashlib.sha256()
-                        h.update(db_salt + password.encode())
-                        attempt_hash_hex = h.hexdigest()
+                        h2 = hashlib.sha256()
+                        h2.update(db_salt + login_password.encode())
+                        attempt_hash_hex = h2.hexdigest()
 
                         if attempt_hash_hex == db_hash_hex:
                             reply_plain = json.dumps({"status": "ok"}).encode()
                         else:
-                            reply_plain = json.dumps(
-                                {"status": "error", "msg": "invalid_credentials"}
-                            ).encode()
+                            reply_plain = json.dumps({"status": "error", "msg": "invalid_credentials"}).encode()
 
-                    # encrypt reply
                     enc = aes_encrypt(K, reply_plain)
                     conn.send(json.dumps({"type": "login_reply", "data": enc}).encode())
 
-    except Exception as e:
-        print("Login error:", e)
+        except Exception as e:
+            print("Login error:", e)
+            traceback.print_exc()
 
+        # --------------------------------------------------------
+        # 7. Encrypted Messaging
+        # --------------------------------------------------------
+        while True:
+            try:
+                raw = conn.recv(65536).decode()
+                if not raw:
+                    print("Client disconnected during messaging.")
+                    break
 
+                msg = json.loads(raw)
 
+                if msg.get("type") != "msg_send":
+                    continue
 
+                enc = msg.get("data")
+                plain = aes_decrypt(K, enc).decode()
+                msg_obj = json.loads(plain)
+                body = msg_obj.get("body", "")
 
+                print("✔ Received:", body)
 
+                ack_plain = json.dumps({"status": "delivered"}).encode()
+                ack_enc = aes_encrypt(K, ack_plain)
 
+                reply = {"type": "msg_ack", "data": ack_enc}
+                conn.send(json.dumps(reply).encode())
+                print("✔ Sent ACK")
 
+            except Exception as e:
+                print("Messaging error:", e)
+                traceback.print_exc()
+                break
 
-
-    conn.close()
+    except Exception as outer_e:
+        print("Unexpected error in handle_client:", outer_e)
+        traceback.print_exc()
+    finally:
+        conn.close()
 
 
 # ============================================================

@@ -183,6 +183,44 @@ def main():
     print("Login response:", json.loads(reply_plain.decode()))
 
 
+
+        # ======================================================
+    # =============== ENCRYPTED MESSAGING ===================
+    # ======================================================
+
+    print("\nSecure channel ready — type your messages.")
+    print("Type /quit to exit.\n")
+
+    while True:
+        text = input("You: ")
+
+        if text.strip() == "/quit":
+            break
+
+        msg_obj = {
+            "type": "message",
+            "body": text
+        }
+
+        plain = json.dumps(msg_obj).encode()
+        enc = aes_encrypt(K, plain)
+
+        packet = {
+            "type": "msg_send",
+            "data": enc
+        }
+
+        s.send(json.dumps(packet).encode())
+
+        # receive ack
+        ack_raw = s.recv(65536).decode()
+        ack_msg = json.loads(ack_raw)
+        ack_plain = aes_decrypt(K, ack_msg["data"]).decode()
+
+        print("Server ACK:", ack_plain)
+
+
+
     s.close()
 
 
