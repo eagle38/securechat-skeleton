@@ -2,12 +2,6 @@
 
 
 
-import sys, os
-
-# Add project root to Python path
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT_DIR not in sys.path:
-    sys.path.append(ROOT_DIR)
 import socket
 import json
 import base64
@@ -16,7 +10,7 @@ from cryptography import x509
 from utils.crypto_utils import load_certificate_from_pem, validate_certificate
 
 HOST = "127.0.0.1"
-PORT = 6000
+PORT = 5000
 
 # Load CA + server certificate
 with open("certs/ca.crt", "rb") as f:
