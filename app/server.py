@@ -229,6 +229,73 @@ def handle_client(conn):
         enc = aes_encrypt(K, reply_plain)
         conn.send(json.dumps({"type": "register_reply", "data": enc}).encode())
 
+         # ======================================================
+    # =================== SECURE LOGIN =====================
+    # ======================================================
+    try:
+        login_raw = conn.recv(65536).decode()
+        if login_raw:
+            login_msg = json.loads(login_raw)
+
+            if login_msg.get("type") == "login":
+                enc_b64 = login_msg.get("data")
+
+                # decrypt login payload
+                login_plain = aes_decrypt(K, enc_b64)
+                login_obj = json.loads(login_plain.decode())
+
+                username = login_obj.get("username")
+                password = login_obj.get("password")
+
+                if username and password:
+                    # lookup user in DB
+                    conn_db = mysql.connector.connect(
+                        host=DB_HOST,
+                        user=DB_USER,
+                        password=DB_PASS,
+                        database=DB_NAME,
+                    )
+                    cur = conn_db.cursor()
+                    cur.execute("SELECT salt, pwd_hash FROM users WHERE username=%s", (username,))
+                    row = cur.fetchone()
+                    cur.close()
+                    conn_db.close()
+
+                    if not row:
+                        reply_plain = json.dumps(
+                            {"status": "error", "msg": "invalid_credentials"}
+                        ).encode()
+                    else:
+                        db_salt, db_hash_hex = row
+
+                        # recompute hash
+                        h = hashlib.sha256()
+                        h.update(db_salt + password.encode())
+                        attempt_hash_hex = h.hexdigest()
+
+                        if attempt_hash_hex == db_hash_hex:
+                            reply_plain = json.dumps({"status": "ok"}).encode()
+                        else:
+                            reply_plain = json.dumps(
+                                {"status": "error", "msg": "invalid_credentials"}
+                            ).encode()
+
+                    # encrypt reply
+                    enc = aes_encrypt(K, reply_plain)
+                    conn.send(json.dumps({"type": "login_reply", "data": enc}).encode())
+
+    except Exception as e:
+        print("Login error:", e)
+
+
+
+
+
+
+
+
+
+
     conn.close()
 
 

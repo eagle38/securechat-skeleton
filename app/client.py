@@ -149,6 +149,40 @@ def main():
     except Exception:
         print("Failed to decrypt reply")
 
+
+         # ======================================================
+    # ===================== LOGIN ==========================
+    # ======================================================
+
+    print("\nNow testing secure login...")
+
+    username = input("Username: ")
+    password = getpass.getpass("Password (hidden): ")
+
+    login_obj = {
+        "username": username,
+        "password": password
+    }
+
+    # encrypt login payload
+    login_plain = json.dumps(login_obj).encode()
+    enc_login = aes_encrypt(K, login_plain)
+
+    login_req = {
+        "type": "login",
+        "data": enc_login
+    }
+
+    s.send(json.dumps(login_req).encode())
+
+    # receive reply
+    reply_raw = s.recv(65536).decode()
+    reply = json.loads(reply_raw)
+
+    reply_plain = aes_decrypt(K, reply["data"])
+    print("Login response:", json.loads(reply_plain.decode()))
+
+
     s.close()
 
 
