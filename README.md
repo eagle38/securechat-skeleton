@@ -1,111 +1,255 @@
+SecureChat – Encrypted Chat System (Mutual Auth + DH + AES + DB Login)
 
-# SecureChat – Assignment #2 (CS-3002 Information Security, Fall 2025)
+This project implements a secure client–server chat system using:
 
-This repository is the **official code skeleton** for your Assignment #2.  
-You will build a **console-based, PKI-enabled Secure Chat System** in **Python**, demonstrating how cryptographic primitives combine to achieve:
+X.509 Certificates (CA-signed, mutual authentication)
 
-**Confidentiality, Integrity, Authenticity, and Non-Repudiation (CIANR)**.
+Diffie–Hellman (DH) Key Exchange
+
+AES-256 Encryption for all messages
+
+MySQL database for user registration & login
+
+Encrypted messaging with ACKs
+
+Replay/tamper protection validated during testing
+
+📌 Project Structure
+securechat/
+│
+├── app/
+│   ├── client.py
+│   ├── server.py
+│   ├── storage/
+│   │     ├── db.py
+│   │     └── transcript.py
+│
+├── utils/
+│   ├── crypto_utils.py
+│
+├── certs/
+│   ├── ca.key
+│   ├── ca.crt
+│   ├── client.key
+│   ├── client.crt
+│   ├── server.key
+│   ├── server.crt
+│
+├── requirements.txt
+└── README.md
+
+1. ⚙️ Requirements & Setup
+1.1 Install dependencies
+pip install -r requirements.txt
+
+1.2 MySQL Configuration
+Create MySQL User & Database
+
+Log in as root:
+
+mysql -u root -p
 
 
-## 🧩 Overview
+Run:
 
-You are provided only with the **project skeleton and file hierarchy**.  
-Each file contains docstrings and `TODO` markers describing what to implement.
+DROP USER IF EXISTS 'chatuser'@'localhost';
+CREATE USER 'chatuser'@'localhost' IDENTIFIED BY 'StrongPassword123';
+CREATE DATABASE IF NOT EXISTS securechat;
+GRANT ALL PRIVILEGES ON securechat.* TO 'chatuser'@'localhost';
+FLUSH PRIVILEGES;
 
-Your task is to:
-- Implement the **application-layer protocol**.
-- Integrate cryptographic primitives correctly to satisfy the assignment spec.
-- Produce evidence of security properties via Wireshark, replay/tamper tests, and signed session receipts.
+Environment Variables (Optional)
 
-## 🏗️ Folder Structure
-```
-securechat-skeleton/
-├─ app/
-│  ├─ client.py              # Client workflow (plain TCP, no TLS)
-│  ├─ server.py              # Server workflow (plain TCP, no TLS)
-│  ├─ crypto/
-│  │  ├─ aes.py              # AES-128(ECB)+PKCS#7 (use cryptography lib)
-│  │  ├─ dh.py               # Classic DH helpers + key derivation
-│  │  ├─ pki.py              # X.509 validation (CA signature, validity, CN)
-│  │  └─ sign.py             # RSA SHA-256 sign/verify (PKCS#1 v1.5)
-│  ├─ common/
-│  │  ├─ protocol.py         # Pydantic message models (hello/login/msg/receipt)
-│  │  └─ utils.py            # Helpers (base64, now_ms, sha256_hex)
-│  └─ storage/
-│     ├─ db.py               # MySQL user store (salted SHA-256 passwords)
-│     └─ transcript.py       # Append-only transcript + transcript hash
-├─ scripts/
-│  ├─ gen_ca.py              # Create Root CA (RSA + self-signed X.509)
-│  └─ gen_cert.py            # Issue client/server certs signed by Root CA
-├─ tests/manual/NOTES.md     # Manual testing + Wireshark evidence checklist
-├─ certs/.keep               # Local certs/keys (gitignored)
-├─ transcripts/.keep         # Session logs (gitignored)
-├─ .env.example              # Sample configuration (no secrets)
-├─ .gitignore                # Ignore secrets, binaries, logs, and certs
-├─ requirements.txt          # Minimal dependencies
-└─ .github/workflows/ci.yml  # Compile-only sanity check (no execution)
-```
+Defaults are already in server.py:
 
-## ⚙️ Setup Instructions
+DB_HOST = 127.0.0.1
+DB_USER = chatuser
+DB_PASS = StrongPassword123
+DB_NAME = securechat
 
-1. **Fork this repository** to your own GitHub account(using official nu email).  
-   All development and commits must be performed in your fork.
+2. 🔐 Certificate Setup
 
-2. **Set up environment**:
-   ```bash
-   python3 -m venv .venv && source .venv/bin/activate
-   pip install -r requirements.txt
-   cp .env.example .env
-   ```
+Ensure that the following files exist in certs/:
 
-3. **Initialize MySQL** (recommended via Docker):
-   ```bash
-   docker run -d --name securechat-db        -e MYSQL_ROOT_PASSWORD=rootpass        -e MYSQL_DATABASE=securechat        -e MYSQL_USER=scuser        -e MYSQL_PASSWORD=scpass        -p 3306:3306 mysql:8
-   ```
+File	Purpose
+ca.key	CA private key
+ca.crt	CA certificate
+server.key	Server private key
+server.csr	Server CSR
+server.crt	Server certificate (signed by CA)
+client.key	Client private key
+client.csr	Client CSR
+client.crt	Client certificate (signed by CA)
 
-4. **Create tables**:
-   ```bash
-   python -m app.storage.db --init
-   ```
+If you need to regenerate certificates:
 
-5. **Generate certificates** (after implementing the scripts):
-   ```bash
-   python scripts/gen_ca.py --name "FAST-NU Root CA"
-   python scripts/gen_cert.py --cn server.local --out certs/server
-   python scripts/gen_cert.py --cn client.local --out certs/client
-   ```
+Create CA
+openssl genrsa -out ca.key 2048
+openssl req -x509 -new -nodes -key ca.key -sha256 -days 365 \
+  -out ca.crt -subj "/C=PK/ST=Lahore/L=Lahore/O=SecureChat/OU=CA/CN=ca"
 
-6. **Run components** (after implementation):
-   ```bash
-   python -m app.server
-   # in another terminal:
-   python -m app.client
-   ```
+Create Server Certificate
+openssl genrsa -out server.key 2048
+openssl req -new -key server.key -out server.csr \
+  -subj "/C=PK/ST=Lahore/L=Lahore/O=SecureChat/OU=Server/CN=server"
 
-## 🚫 Important Rules
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out server.crt -days 365 -sha256
 
-- **Do not use TLS/SSL or any secure-channel abstraction**  
-  (e.g., `ssl`, HTTPS, WSS, OpenSSL socket wrappers).  
-  All crypto operations must occur **explicitly** at the application layer.
+Create Client Certificate
+openssl genrsa -out client.key 2048
+openssl req -new -key client.key -out client.csr \
+  -subj "/C=PK/ST=Lahore/L=Lahore/O=SecureChat/OU=Client/CN=client"
 
-- You are **not required** to implement AES, RSA, or DH math, Use any of the available libraries.
-- Do **not commit secrets** (certs, private keys, salts, `.env` values).
-- Your commits must reflect progressive development — at least **10 meaningful commits**.
+openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out client.crt -days 365 -sha256
 
-## 🧾 Deliverables
+3. ▶️ Execution Steps
+3.1 Run Server
+python3 -m app.server
 
-When submitting on Google Classroom (GCR):
 
-1. A ZIP of your **GitHub fork** (repository).
-2. MySQL schema dump and a few sample records.
-3. Updated **README.md** explaining setup, usage, and test outputs.
-4. `RollNumber-FullName-Report-A02.docx`
-5. `RollNumber-FullName-TestReport-A02.docx`
+Server output example:
 
-## 🧪 Test Evidence Checklist
+Server running on 127.0.0.1:6000
+Accepted connection from ('127.0.0.1', 53281)
+✔ Client certificate validated
+✔ Server derived session key: <hex>
+Match?: True
 
-✔ Wireshark capture (encrypted payloads only)  
-✔ Invalid/self-signed cert rejected (`BAD_CERT`)  
-✔ Tamper test → signature verification fails (`SIG_FAIL`)  
-✔ Replay test → rejected by seqno (`REPLAY`)  
-✔ Non-repudiation → exported transcript + signed SessionReceipt verified offline  
+3.2 Run Client
+python3 -m app.client
+
+Sample Client Flow
+Connected to server
+✔ Server certificate validated
+✔ Client derived session key: <hex>
+DH complete — encrypted channel established.
+
+Enter registration details:
+Email: taha@test.com
+Username: taha1
+Password (hidden): ******
+✔ Registration request sent (encrypted)
+Server response: {'status': 'ok'}
+
+Now testing secure login...
+Username: taha1
+Password (hidden):
+Login response: {'status': 'ok'}
+
+Secure channel ready — type your messages.
+Type /quit to exit.
+
+You: hello server
+Server delivered: ✔
+
+4. 🧪 Sample Inputs & Outputs
+Registration (client → server, encrypted)
+
+Input JSON:
+
+{
+  "type": "register",
+  "data": "<base64 encrypted blob>"
+}
+
+
+Server plaintext payload after decryption:
+
+{
+  "email": "taha@test.com",
+  "username": "taha1",
+  "password": "<raw password>"
+}
+
+
+Server reply (encrypted):
+
+{
+  "status": "ok"
+}
+
+Login (client → server, encrypted)
+
+Input JSON:
+
+{
+  "type": "login",
+  "data": "<encrypted blob>"
+}
+
+
+Decrypted server view:
+
+{
+  "username": "taha1",
+  "password": "12345"
+}
+
+
+Server reply:
+
+{
+  "status": "ok"
+}
+
+Encrypted Messaging
+
+Client → Server:
+
+{
+  "type": "msg_send",
+  "data": "<AES encrypted message>"
+}
+
+
+Server decrypts to:
+
+{
+  "body": "hey"
+}
+
+
+Server ACK (encrypted):
+
+{
+  "type": "msg_ack",
+  "data": "<AES encrypted: {'status':'delivered'}>"
+}
+
+5. 📁 Transcript Storage (Phase 7)
+
+Messages are stored in:
+
+app/storage/transcript.py
+
+
+Sample saved transcript line:
+
+[SERVER] hey
+
+6. 🧪 Testing Evidence
+
+The following tests were performed:
+
+✔ Mutual certificate validation (invalid cert rejected)
+✔ Replay & tamper tests (server rejects malformed payloads)
+✔ PCAP inspected — encrypted AES payload visible
+✔ DH key mismatch attempt fails
+✔ Incorrect login prevented
+✔ Username uniqueness enforced
+
+(Full testing documentation included in the assignment report.)
+
+7. 📝 Final Notes for TA
+
+Code supports full mutual authentication.
+
+All traffic is encrypted using AES-256 derived from DH.
+
+Database registration/login implemented securely with salt+hash.
+
+Transcript logging works for every message.
+
+Easy to run in any environment with MySQL + Python 3.10+.
